@@ -8,11 +8,11 @@ const dotenv = require("dotenv");
 dotenv.config();
 
 const app = express();
-app.set("trust proxy", 1);
 app.use(express.json({ limit: "1mb" }));
 
 const PORT = Number(process.env.PORT || process.env.SERVER_PORT || 8787);
 const SERVER_BASE_URL = process.env.SERVER_BASE_URL || `http://localhost:${PORT}`;
+const APP_BASE_URL = process.env.APP_BASE_URL || "http://localhost:5173";
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "jobradar_sid";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
@@ -21,57 +21,6 @@ const HAS_DIST_BUILD = fs.existsSync(path.join(DIST_DIR, "index.html"));
 const COOKIE_SECURE = process.env.COOKIE_SECURE
   ? String(process.env.COOKIE_SECURE).toLowerCase() === "true"
   : process.env.NODE_ENV === "production";
-const APP_BASE_URL_ENV = process.env.APP_BASE_URL || process.env.FRONTEND_BASE_URL || "";
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-
-function parseGoogleOAuthCredentialsJson(rawValue) {
-  if (!rawValue) return {};
-  try {
-    const parsed = JSON.parse(rawValue);
-    if (parsed?.web) return parsed.web;
-    if (parsed?.installed) return parsed.installed;
-    return parsed;
-  } catch (_error) {
-    return {};
-  }
-}
-
-const GOOGLE_OAUTH_CREDENTIALS = parseGoogleOAuthCredentialsJson(
-  process.env.GOOGLE_OAUTH_CREDENTIALS_JSON
-);
-const GOOGLE_CLIENT_ID =
-  process.env.GOOGLE_CLIENT_ID ||
-  GOOGLE_OAUTH_CREDENTIALS.client_id ||
-  "";
-const GOOGLE_CLIENT_SECRET =
-  process.env.GOOGLE_CLIENT_SECRET ||
-  GOOGLE_OAUTH_CREDENTIALS.client_secret ||
-  "";
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || "";
-const GOOGLE_SCOPES = (
-  process.env.GOOGLE_SCOPES ||
-  "https://www.googleapis.com/auth/gmail.readonly"
-)
-  .split(/[,\s]+/)
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-const MICROSOFT_CLIENT_ID =
-  process.env.MICROSOFT_CLIENT_ID ||
-  process.env.MS_CLIENT_ID ||
-  "";
-const MICROSOFT_CLIENT_SECRET =
-  process.env.MICROSOFT_CLIENT_SECRET ||
-  process.env.MS_CLIENT_SECRET ||
-  "";
-const MICROSOFT_TENANT_ID =
-  process.env.MICROSOFT_TENANT_ID ||
-  process.env.MS_TENANT_ID ||
-  "common";
-const MICROSOFT_REDIRECT_URI =
-  process.env.MICROSOFT_REDIRECT_URI ||
-  process.env.MS_REDIRECT_URI ||
-  "";
 
 const sessions = new Map();
 let openaiClient = null;
@@ -151,32 +100,16 @@ app.use((req, res, next) => {
 
 function missingOAuthConfig(provider) {
   if (provider === "google") {
-    return !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET;
+    return !process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET;
   }
-  return !MICROSOFT_CLIENT_ID || !MICROSOFT_CLIENT_SECRET;
+  return !process.env.MICROSOFT_CLIENT_ID || !process.env.MICROSOFT_CLIENT_SECRET;
 }
 
-function getRequestBaseUrl(req) {
-  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
-  const proto = forwardedProto || req.protocol || "https";
-  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
-  if (host) return `${proto}://${host}`;
-  return SERVER_BASE_URL;
-}
-
-function getServerBaseUrl(req) {
-  return process.env.SERVER_BASE_URL || getRequestBaseUrl(req);
-}
-
-function getAppBaseUrl(req) {
-  return APP_BASE_URL_ENV || getRequestBaseUrl(req);
-}
-
-function oauthRedirectUrl(req, status, provider, message) {
+function oauthRedirectUrl(status, provider, message) {
   const params = new URLSearchParams();
   params.set("oauth", `${provider}_${status}`);
   if (message) params.set("message", message);
-  return `${getAppBaseUrl(req)}/?${params.toString()}`;
+  return `${APP_BASE_URL}/?${params.toString()}`;
 }
 
 function safeErrorMessage(error, fallback) {
@@ -200,14 +133,10 @@ app.get("/api/auth/status", (req, res) => {
 
   res.json({
     connected,
-    googleConfigured: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
-    outlookConfigured: Boolean(MICROSOFT_CLIENT_ID && MICROSOFT_CLIENT_SECRET),
-    googleScopesRequested: GOOGLE_SCOPES,
     google: {
       connected: googleConnected,
       email: req.session.google?.profile?.email || "",
       name: req.session.google?.profile?.name || "",
-      scope: req.session.google?.scope || "",
     },
     outlook: {
       connected: outlookConnected,
@@ -217,25 +146,29 @@ app.get("/api/auth/status", (req, res) => {
         "",
       name: req.session.outlook?.profile?.displayName || "",
     },
-    openaiConfigured: Boolean(OPENAI_API_KEY),
+    openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
   });
 });
 
 app.get("/api/auth/google/start", (req, res) => {
   if (missingOAuthConfig("google")) {
-    return res.redirect(oauthRedirectUrl(req, "error", "google", "Missing Google OAuth credentials"));
+    return res.redirect(oauthRedirectUrl("error", "google", "Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET"));
   }
 
   const state = crypto.randomUUID();
   req.session.oauthState.google = state;
 
-  const redirectUri = GOOGLE_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/google/callback`;
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${SERVER_BASE_URL}/api/auth/google/callback`;
   const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-  authUrl.searchParams.set("client_id", GOOGLE_CLIENT_ID);
+  authUrl.searchParams.set("client_id", process.env.GOOGLE_CLIENT_ID);
   authUrl.searchParams.set("redirect_uri", redirectUri);
   authUrl.searchParams.set("response_type", "code");
-  authUrl.searchParams.set("scope", GOOGLE_SCOPES.join(" "));
-  authUrl.searchParams.set("include_granted_scopes", "false");
+  authUrl.searchParams.set("scope", [
+    "openid",
+    "email",
+    "profile",
+    "https://www.googleapis.com/auth/gmail.readonly",
+  ].join(" "));
   authUrl.searchParams.set("access_type", "offline");
   authUrl.searchParams.set("prompt", "consent");
   authUrl.searchParams.set("state", state);
@@ -246,22 +179,22 @@ app.get("/api/auth/google/start", (req, res) => {
 app.get("/api/auth/google/callback", async (req, res) => {
   const { code, state, error } = req.query;
   if (error) {
-    return res.redirect(oauthRedirectUrl(req, "error", "google", String(error)));
+    return res.redirect(oauthRedirectUrl("error", "google", String(error)));
   }
 
   if (!code || state !== req.session.oauthState.google) {
-    return res.redirect(oauthRedirectUrl(req, "error", "google", "Invalid Google OAuth state"));
+    return res.redirect(oauthRedirectUrl("error", "google", "Invalid Google OAuth state"));
   }
 
   try {
-    const redirectUri = GOOGLE_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/google/callback`;
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${SERVER_BASE_URL}/api/auth/google/callback`;
     const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         code: String(code),
-        client_id: GOOGLE_CLIENT_ID,
-        client_secret: GOOGLE_CLIENT_SECRET,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
         redirect_uri: redirectUri,
         grant_type: "authorization_code",
       }),
@@ -272,7 +205,7 @@ app.get("/api/auth/google/callback", async (req, res) => {
       throw new Error(tokenJson.error_description || tokenJson.error || "Google token exchange failed");
     }
 
-    const profileResp = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+    const profileResp = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
       headers: { Authorization: `Bearer ${tokenJson.access_token}` },
     });
     const profileJson = await profileResp.json();
@@ -287,17 +220,17 @@ app.get("/api/auth/google/callback", async (req, res) => {
         tokenType: tokenJson.token_type,
       },
       profile: {
-        sub: "",
-        email: profileJson.emailAddress || "",
-        name: "",
-        picture: "",
+        sub: profileJson.sub,
+        email: profileJson.email,
+        name: profileJson.name,
+        picture: profileJson.picture,
       },
     };
 
     delete req.session.oauthState.google;
-    return res.redirect(oauthRedirectUrl(req, "success", "google"));
+    return res.redirect(oauthRedirectUrl("success", "google"));
   } catch (err) {
-    return res.redirect(oauthRedirectUrl(req, "error", "google", safeErrorMessage(err, "Google OAuth failed")));
+    return res.redirect(oauthRedirectUrl("error", "google", safeErrorMessage(err, "Google OAuth failed")));
   }
 });
 
@@ -308,16 +241,16 @@ app.post("/api/auth/google/disconnect", (req, res) => {
 
 app.get("/api/auth/outlook/start", (req, res) => {
   if (missingOAuthConfig("outlook")) {
-    return res.redirect(oauthRedirectUrl(req, "error", "outlook", "Missing Microsoft OAuth credentials"));
+    return res.redirect(oauthRedirectUrl("error", "outlook", "Missing MICROSOFT_CLIENT_ID or MICROSOFT_CLIENT_SECRET"));
   }
 
-  const tenant = MICROSOFT_TENANT_ID;
+  const tenant = process.env.MICROSOFT_TENANT_ID || "common";
   const state = crypto.randomUUID();
   req.session.oauthState.outlook = state;
 
-  const redirectUri = MICROSOFT_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/outlook/callback`;
+  const redirectUri = process.env.MICROSOFT_REDIRECT_URI || `${SERVER_BASE_URL}/api/auth/outlook/callback`;
   const authUrl = new URL(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize`);
-  authUrl.searchParams.set("client_id", MICROSOFT_CLIENT_ID);
+  authUrl.searchParams.set("client_id", process.env.MICROSOFT_CLIENT_ID);
   authUrl.searchParams.set("redirect_uri", redirectUri);
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("scope", [
@@ -336,24 +269,24 @@ app.get("/api/auth/outlook/start", (req, res) => {
 app.get("/api/auth/outlook/callback", async (req, res) => {
   const { code, state, error } = req.query;
   if (error) {
-    return res.redirect(oauthRedirectUrl(req, "error", "outlook", String(error)));
+    return res.redirect(oauthRedirectUrl("error", "outlook", String(error)));
   }
 
   if (!code || state !== req.session.oauthState.outlook) {
-    return res.redirect(oauthRedirectUrl(req, "error", "outlook", "Invalid Microsoft OAuth state"));
+    return res.redirect(oauthRedirectUrl("error", "outlook", "Invalid Microsoft OAuth state"));
   }
 
   try {
-    const tenant = MICROSOFT_TENANT_ID;
-    const redirectUri = MICROSOFT_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/outlook/callback`;
+    const tenant = process.env.MICROSOFT_TENANT_ID || "common";
+    const redirectUri = process.env.MICROSOFT_REDIRECT_URI || `${SERVER_BASE_URL}/api/auth/outlook/callback`;
     const tokenResp = await fetch(
       `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
       {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
-          client_id: MICROSOFT_CLIENT_ID,
-          client_secret: MICROSOFT_CLIENT_SECRET,
+          client_id: process.env.MICROSOFT_CLIENT_ID,
+          client_secret: process.env.MICROSOFT_CLIENT_SECRET,
           code: String(code),
           grant_type: "authorization_code",
           redirect_uri: redirectUri,
@@ -390,9 +323,9 @@ app.get("/api/auth/outlook/callback", async (req, res) => {
     };
 
     delete req.session.oauthState.outlook;
-    return res.redirect(oauthRedirectUrl(req, "success", "outlook"));
+    return res.redirect(oauthRedirectUrl("success", "outlook"));
   } catch (err) {
-    return res.redirect(oauthRedirectUrl(req, "error", "outlook", safeErrorMessage(err, "Microsoft OAuth failed")));
+    return res.redirect(oauthRedirectUrl("error", "outlook", safeErrorMessage(err, "Microsoft OAuth failed")));
   }
 });
 
@@ -401,6 +334,13 @@ app.post("/api/auth/outlook/disconnect", (req, res) => {
   res.json({ ok: true });
 });
 
+function toUnixSeconds(dateString, fallbackSeconds) {
+  if (!dateString) return fallbackSeconds;
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return fallbackSeconds;
+  return Math.floor(date.getTime() / 1000);
+}
+
 function compactEmailText(value, maxLen = 500) {
   return String(value || "")
     .replace(/\s+/g, " ")
@@ -408,49 +348,45 @@ function compactEmailText(value, maxLen = 500) {
     .slice(0, maxLen);
 }
 
-const JOB_TERMS = [
-  "application",
-  "interview",
-  "recruit",
-  "hiring",
-  "offer",
-  "reject",
-  "phone screen",
-  "technical",
-  "onsite",
-  "greenhouse",
-  "lever",
-  "career",
-  "job",
-  "职位",
-  "面试",
-  "录用",
-  "申请",
-];
+async function fetchGoogleJobEmails(session, dateRange) {
+  const accessToken = session.google?.tokens?.accessToken;
+  if (!accessToken) return [];
 
-function looksJobRelated(text) {
-  const hay = String(text || "").toLowerCase();
-  return JOB_TERMS.some((term) => hay.includes(term));
-}
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const fromSeconds = toUnixSeconds(dateRange?.from, nowSeconds - 365 * 24 * 60 * 60);
+  const toSeconds = toUnixSeconds(dateRange?.to, nowSeconds);
+  const keywordQuery = [
+    "application",
+    "interview",
+    "recruiter",
+    "hiring",
+    "offer",
+    "rejection",
+    "phone screen",
+    "technical",
+  ]
+    .map((k) => `"${k}"`)
+    .join(" OR ");
 
-function parseDateOrFallback(dateString, fallbackDate) {
-  const date = dateString ? new Date(`${dateString}T00:00:00Z`) : fallbackDate;
-  if (!date || Number.isNaN(date.getTime())) return fallbackDate;
-  return date;
-}
+  const gmailQuery = `after:${fromSeconds} before:${toSeconds} (${keywordQuery})`;
+  const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+  listUrl.searchParams.set("maxResults", "20");
+  listUrl.searchParams.set("q", gmailQuery);
 
-function toGmailDate(date) {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(date.getUTCDate()).padStart(2, "0");
-  return `${y}/${m}/${d}`;
-}
+  const listResp = await fetch(listUrl.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const listJson = await listResp.json();
+  if (!listResp.ok) {
+    throw new Error(listJson.error?.message || "Gmail fetch failed");
+  }
 
-async function fetchGoogleMessageDetails(accessToken, messageIds) {
-  if (!messageIds.length) return [];
+  const messages = Array.isArray(listJson.messages) ? listJson.messages : [];
+  if (!messages.length) return [];
+
   const details = await Promise.all(
-    messageIds.map(async (messageId) => {
-      const msgUrl = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}`);
+    messages.map(async (message) => {
+      const msgUrl = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`);
       msgUrl.searchParams.set("format", "metadata");
       msgUrl.searchParams.append("metadataHeaders", "From");
       msgUrl.searchParams.append("metadataHeaders", "Subject");
@@ -477,70 +413,8 @@ async function fetchGoogleMessageDetails(accessToken, messageIds) {
       };
     })
   );
+
   return details.filter(Boolean);
-}
-
-async function fetchGoogleJobEmails(session, dateRange) {
-  const accessToken = session.google?.tokens?.accessToken;
-  if (!accessToken) return [];
-
-  const now = new Date();
-  const defaultFrom = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), now.getUTCDate()));
-  const fromDateInput = parseDateOrFallback(dateRange?.from, defaultFrom);
-  const toDateInclusive = parseDateOrFallback(dateRange?.to, now);
-  const toDateExclusive = new Date(toDateInclusive);
-  toDateExclusive.setUTCDate(toDateExclusive.getUTCDate() + 1);
-  const fromDate = fromDateInput <= toDateExclusive ? fromDateInput : new Date(toDateInclusive);
-
-  const fromDateStr = toGmailDate(fromDate);
-  const toDateStr = toGmailDate(toDateExclusive);
-
-  const keywordQuery = [
-    "application",
-    "interview",
-    "recruit",
-    "hiring",
-    "offer",
-    "rejection",
-    "\"phone screen\"",
-    "technical",
-    "career",
-    "job",
-  ]
-    .join(" OR ");
-
-  const queries = [
-    `after:${fromDateStr} before:${toDateStr} (${keywordQuery})`,
-    `after:${fromDateStr} before:${toDateStr}`,
-  ];
-
-  let messageIds = [];
-  for (const query of queries) {
-    const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-    listUrl.searchParams.set("maxResults", "80");
-    listUrl.searchParams.set("q", query);
-
-    const listResp = await fetch(listUrl.toString(), {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    const listJson = await listResp.json();
-    if (!listResp.ok) {
-      throw new Error(listJson.error?.message || "Gmail fetch failed");
-    }
-    const messages = Array.isArray(listJson.messages) ? listJson.messages : [];
-    if (messages.length) {
-      messageIds = messages.map((m) => m.id).filter(Boolean);
-      break;
-    }
-  }
-
-  if (!messageIds.length) return [];
-
-  const details = await fetchGoogleMessageDetails(accessToken, messageIds);
-  const filtered = details.filter((entry) =>
-    looksJobRelated(`${entry.from} ${entry.subject} ${entry.body}`)
-  );
-  return filtered.length ? filtered : details.slice(0, 30);
 }
 
 async function fetchOutlookJobEmails(session, dateRange) {
@@ -568,10 +442,11 @@ async function fetchOutlookJobEmails(session, dateRange) {
   }
 
   const rows = Array.isArray(data.value) ? data.value : [];
+  const terms = ["application", "interview", "recruit", "hiring", "offer", "reject", "screen", "technical"];
   return rows
     .filter((row) => {
       const hay = `${row.subject || ""} ${row.bodyPreview || ""}`.toLowerCase();
-      return looksJobRelated(hay);
+      return terms.some((term) => hay.includes(term));
     })
     .map((row) => ({
       provider: "outlook",
@@ -665,12 +540,12 @@ app.post("/api/analyze", async (req, res) => {
       return res.status(400).json({ error: "Missing required field: text" });
     }
 
-    if (!OPENAI_API_KEY) {
+    if (!process.env.OPENAI_API_KEY) {
       return res.status(500).json({ error: "Missing OPENAI_API_KEY" });
     }
 
     if (!openaiClient) {
-      openaiClient = new OpenAI({ apiKey: OPENAI_API_KEY });
+      openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     }
 
     const completion = await openaiClient.chat.completions.create({

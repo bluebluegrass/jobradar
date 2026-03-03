@@ -16,15 +16,11 @@ services:
         value: gpt-4.1-mini
       - key: APP_BASE_URL
         sync: false
-      - key: FRONTEND_BASE_URL
-        sync: false
       - key: SERVER_BASE_URL
         sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
-        sync: false
-      - key: GOOGLE_OAUTH_CREDENTIALS_JSON
         sync: false
       - key: GOOGLE_REDIRECT_URI
         sync: false
@@ -32,15 +28,7 @@ services:
         sync: false
       - key: MICROSOFT_CLIENT_SECRET
         sync: false
-      - key: MS_CLIENT_ID
-        sync: false
-      - key: MS_CLIENT_SECRET
-        sync: false
       - key: MICROSOFT_TENANT_ID
         value: common
-      - key: MS_TENANT_ID
-        sync: false
       - key: MICROSOFT_REDIRECT_URI
-        sync: false
-      - key: MS_REDIRECT_URI
         sync: false

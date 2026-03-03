@@ -26,11 +26,6 @@ cp .env.example .env
 - `OPENAI_API_KEY`
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
 - `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`
-- Alias keys are also accepted:
-  - `FRONTEND_BASE_URL` (for `APP_BASE_URL`)
-  - `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_TENANT_ID`, `MS_REDIRECT_URI`
-  - `GOOGLE_OAUTH_CREDENTIALS_JSON` (JSON containing Google `client_id` and `client_secret`)
-  - Optional: `GOOGLE_SCOPES` (defaults to Gmail read-only scope)
 
 4. Configure OAuth redirect URIs
 - Google: `http://localhost:8787/api/auth/google/callback`
@@ -62,27 +57,3 @@ Backend: `http://localhost:8787`
 4. Set OAuth redirect URIs in providers:
    - Google: `https://<your-service>.onrender.com/api/auth/google/callback`
    - Microsoft: `https://<your-service>.onrender.com/api/auth/outlook/callback`
-
-## Custom Domain (Cloudflare + Render)
-1. In Render service settings, open **Custom Domains** and add `jobradar.simona.life`.
-2. Render will show a DNS target (usually your `*.onrender.com` host).
-3. In Cloudflare DNS, create:
-   - `Type`: `CNAME`
-   - `Name`: `jobradar`
-   - `Target`: the Render target host
-4. Keep Cloudflare proxy **DNS only** until Render certificate is issued, then you can switch to proxied if desired.
-5. After domain is active, update Render env:
-   - `APP_BASE_URL=https://jobradar.simona.life`
-   - `SERVER_BASE_URL=https://jobradar.simona.life`
-   - `GOOGLE_REDIRECT_URI=https://jobradar.simona.life/api/auth/google/callback`
-   - `MICROSOFT_REDIRECT_URI=https://jobradar.simona.life/api/auth/outlook/callback`
-6. Update the same redirect URIs in Google Cloud Console and Azure App Registration.
-
-## OAuth Troubleshooting
-- Hit `https://<your-domain>/api/auth/status` and confirm:
-  - `googleConfigured: true`
-  - `outlookConfigured: true`
-- Also check Google scope diagnostics:
-  - `googleScopesRequested` should only include Gmail read scope
-  - `google.scope` shows scope actually granted for this session token
-- If either is `false`, the Render env key name is wrong or value is empty.
