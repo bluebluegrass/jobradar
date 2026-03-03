@@ -82,4 +82,7 @@ Backend: `http://localhost:8787`
 - Hit `https://<your-domain>/api/auth/status` and confirm:
   - `googleConfigured: true`
   - `outlookConfigured: true`
+- Also check Google scope diagnostics:
+  - `googleScopesRequested` should only include Gmail read scope
+  - `google.scope` shows scope actually granted for this session token
 - If either is `false`, the Render env key name is wrong or value is empty.

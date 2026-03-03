@@ -52,7 +52,7 @@ const GOOGLE_SCOPES = (
   process.env.GOOGLE_SCOPES ||
   "https://www.googleapis.com/auth/gmail.readonly"
 )
-  .split(/\s+/)
+  .split(/[,\s]+/)
   .map((s) => s.trim())
   .filter(Boolean);
 
@@ -202,10 +202,12 @@ app.get("/api/auth/status", (req, res) => {
     connected,
     googleConfigured: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
     outlookConfigured: Boolean(MICROSOFT_CLIENT_ID && MICROSOFT_CLIENT_SECRET),
+    googleScopesRequested: GOOGLE_SCOPES,
     google: {
       connected: googleConnected,
       email: req.session.google?.profile?.email || "",
       name: req.session.google?.profile?.name || "",
+      scope: req.session.google?.scope || "",
     },
     outlook: {
       connected: outlookConnected,
@@ -233,6 +235,7 @@ app.get("/api/auth/google/start", (req, res) => {
   authUrl.searchParams.set("redirect_uri", redirectUri);
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("scope", GOOGLE_SCOPES.join(" "));
+  authUrl.searchParams.set("include_granted_scopes", "false");
   authUrl.searchParams.set("access_type", "offline");
   authUrl.searchParams.set("prompt", "consent");
   authUrl.searchParams.set("state", state);
