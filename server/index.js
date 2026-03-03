@@ -21,6 +21,50 @@ const HAS_DIST_BUILD = fs.existsSync(path.join(DIST_DIR, "index.html"));
 const COOKIE_SECURE = process.env.COOKIE_SECURE
   ? String(process.env.COOKIE_SECURE).toLowerCase() === "true"
   : process.env.NODE_ENV === "production";
+const APP_BASE_URL_ENV = process.env.APP_BASE_URL || process.env.FRONTEND_BASE_URL || "";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+
+function parseGoogleOAuthCredentialsJson(rawValue) {
+  if (!rawValue) return {};
+  try {
+    const parsed = JSON.parse(rawValue);
+    if (parsed?.web) return parsed.web;
+    if (parsed?.installed) return parsed.installed;
+    return parsed;
+  } catch (_error) {
+    return {};
+  }
+}
+
+const GOOGLE_OAUTH_CREDENTIALS = parseGoogleOAuthCredentialsJson(
+  process.env.GOOGLE_OAUTH_CREDENTIALS_JSON
+);
+const GOOGLE_CLIENT_ID =
+  process.env.GOOGLE_CLIENT_ID ||
+  GOOGLE_OAUTH_CREDENTIALS.client_id ||
+  "";
+const GOOGLE_CLIENT_SECRET =
+  process.env.GOOGLE_CLIENT_SECRET ||
+  GOOGLE_OAUTH_CREDENTIALS.client_secret ||
+  "";
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || "";
+
+const MICROSOFT_CLIENT_ID =
+  process.env.MICROSOFT_CLIENT_ID ||
+  process.env.MS_CLIENT_ID ||
+  "";
+const MICROSOFT_CLIENT_SECRET =
+  process.env.MICROSOFT_CLIENT_SECRET ||
+  process.env.MS_CLIENT_SECRET ||
+  "";
+const MICROSOFT_TENANT_ID =
+  process.env.MICROSOFT_TENANT_ID ||
+  process.env.MS_TENANT_ID ||
+  "common";
+const MICROSOFT_REDIRECT_URI =
+  process.env.MICROSOFT_REDIRECT_URI ||
+  process.env.MS_REDIRECT_URI ||
+  "";
 
 const sessions = new Map();
 let openaiClient = null;
@@ -100,9 +144,9 @@ app.use((req, res, next) => {
 
 function missingOAuthConfig(provider) {
   if (provider === "google") {
-    return !process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET;
+    return !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET;
   }
-  return !process.env.MICROSOFT_CLIENT_ID || !process.env.MICROSOFT_CLIENT_SECRET;
+  return !MICROSOFT_CLIENT_ID || !MICROSOFT_CLIENT_SECRET;
 }
 
 function getRequestBaseUrl(req) {
@@ -118,7 +162,7 @@ function getServerBaseUrl(req) {
 }
 
 function getAppBaseUrl(req) {
-  return process.env.APP_BASE_URL || getRequestBaseUrl(req);
+  return APP_BASE_URL_ENV || getRequestBaseUrl(req);
 }
 
 function oauthRedirectUrl(req, status, provider, message) {
@@ -149,8 +193,8 @@ app.get("/api/auth/status", (req, res) => {
 
   res.json({
     connected,
-    googleConfigured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
-    outlookConfigured: Boolean(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET),
+    googleConfigured: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
+    outlookConfigured: Boolean(MICROSOFT_CLIENT_ID && MICROSOFT_CLIENT_SECRET),
     google: {
       connected: googleConnected,
       email: req.session.google?.profile?.email || "",
@@ -164,21 +208,21 @@ app.get("/api/auth/status", (req, res) => {
         "",
       name: req.session.outlook?.profile?.displayName || "",
     },
-    openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
+    openaiConfigured: Boolean(OPENAI_API_KEY),
   });
 });
 
 app.get("/api/auth/google/start", (req, res) => {
   if (missingOAuthConfig("google")) {
-    return res.redirect(oauthRedirectUrl(req, "error", "google", "Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET"));
+    return res.redirect(oauthRedirectUrl(req, "error", "google", "Missing Google OAuth credentials"));
   }
 
   const state = crypto.randomUUID();
   req.session.oauthState.google = state;
 
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/google/callback`;
+  const redirectUri = GOOGLE_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/google/callback`;
   const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-  authUrl.searchParams.set("client_id", process.env.GOOGLE_CLIENT_ID);
+  authUrl.searchParams.set("client_id", GOOGLE_CLIENT_ID);
   authUrl.searchParams.set("redirect_uri", redirectUri);
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("scope", [
@@ -205,14 +249,14 @@ app.get("/api/auth/google/callback", async (req, res) => {
   }
 
   try {
-    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/google/callback`;
+    const redirectUri = GOOGLE_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/google/callback`;
     const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         code: String(code),
-        client_id: process.env.GOOGLE_CLIENT_ID,
-        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
         redirect_uri: redirectUri,
         grant_type: "authorization_code",
       }),
@@ -259,16 +303,16 @@ app.post("/api/auth/google/disconnect", (req, res) => {
 
 app.get("/api/auth/outlook/start", (req, res) => {
   if (missingOAuthConfig("outlook")) {
-    return res.redirect(oauthRedirectUrl(req, "error", "outlook", "Missing MICROSOFT_CLIENT_ID or MICROSOFT_CLIENT_SECRET"));
+    return res.redirect(oauthRedirectUrl(req, "error", "outlook", "Missing Microsoft OAuth credentials"));
   }
 
-  const tenant = process.env.MICROSOFT_TENANT_ID || "common";
+  const tenant = MICROSOFT_TENANT_ID;
   const state = crypto.randomUUID();
   req.session.oauthState.outlook = state;
 
-  const redirectUri = process.env.MICROSOFT_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/outlook/callback`;
+  const redirectUri = MICROSOFT_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/outlook/callback`;
   const authUrl = new URL(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize`);
-  authUrl.searchParams.set("client_id", process.env.MICROSOFT_CLIENT_ID);
+  authUrl.searchParams.set("client_id", MICROSOFT_CLIENT_ID);
   authUrl.searchParams.set("redirect_uri", redirectUri);
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("scope", [
@@ -295,16 +339,16 @@ app.get("/api/auth/outlook/callback", async (req, res) => {
   }
 
   try {
-    const tenant = process.env.MICROSOFT_TENANT_ID || "common";
-    const redirectUri = process.env.MICROSOFT_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/outlook/callback`;
+    const tenant = MICROSOFT_TENANT_ID;
+    const redirectUri = MICROSOFT_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/outlook/callback`;
     const tokenResp = await fetch(
       `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
       {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
-          client_id: process.env.MICROSOFT_CLIENT_ID,
-          client_secret: process.env.MICROSOFT_CLIENT_SECRET,
+          client_id: MICROSOFT_CLIENT_ID,
+          client_secret: MICROSOFT_CLIENT_SECRET,
           code: String(code),
           grant_type: "authorization_code",
           redirect_uri: redirectUri,
@@ -558,12 +602,12 @@ app.post("/api/analyze", async (req, res) => {
       return res.status(400).json({ error: "Missing required field: text" });
     }
 
-    if (!process.env.OPENAI_API_KEY) {
+    if (!OPENAI_API_KEY) {
       return res.status(500).json({ error: "Missing OPENAI_API_KEY" });
     }
 
     if (!openaiClient) {
-      openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      openaiClient = new OpenAI({ apiKey: OPENAI_API_KEY });
     }
 
     const completion = await openaiClient.chat.completions.create({
