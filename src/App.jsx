@@ -89,6 +89,23 @@ const COLORS = {
   "Rejected":     "#ef4444",
 };
 
+function toDateInputValue(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function getDefaultDateRange() {
+  const today = new Date();
+  const monthBefore = new Date(today);
+  monthBefore.setMonth(monthBefore.getMonth() - 1);
+  return {
+    from: toDateInputValue(monthBefore),
+    to: toDateInputValue(today),
+  };
+}
+
 // ─── SANKEY DIAGRAM ────────────────────────────────────────────────────────────
 // Proper filled ribbon Sankey: each band is a filled curved shape (not a stroke).
 // Forward bands flow left→right. Drop bands arc down to a rejection bar.
@@ -343,8 +360,9 @@ export default function JobRadar() {
   const [connectError, setConnectError] = useState("");
   const [connectNotice, setConnectNotice] = useState("");
   const [connectBusy, setConnectBusy] = useState(false);
-  const [dateRange, setDateRange] = useState({ from: "2024-01-01", to: "2024-12-31" });
+  const [dateRange, setDateRange] = useState(() => getDefaultDateRange());
   const [tab, setTab] = useState("overview");
+  const todayDate = toDateInputValue(new Date());
 
   const loadMsgs = ["Reading emails...","Filtering job content...","Identifying companies...","Mapping stages...","Computing metrics...","Generating insights..."];
 
@@ -409,6 +427,18 @@ export default function JobRadar() {
   useEffect(() => {
     if (screen === "connect") refreshAuthStatus();
   }, [screen]);
+
+  function handleDateChange(field, rawValue) {
+    const value = rawValue && rawValue > todayDate ? todayDate : rawValue;
+    setDateRange((prev) => {
+      const next = { ...prev, [field]: value };
+      if (next.from && next.to && next.from > next.to) {
+        if (field === "from") next.to = next.from;
+        if (field === "to") next.from = next.to;
+      }
+      return next;
+    });
+  }
 
   async function analyze(text) {
     setScreen("loading"); setLoadPct(0);
@@ -529,10 +559,21 @@ export default function JobRadar() {
           <div style={{ marginBottom:24 }}>
             <label style={{ color:"#64748b", fontSize:10, letterSpacing:"0.1em", textTransform:"uppercase", display:"block", marginBottom:8, fontFamily:"'DM Mono',monospace" }}>Date Range</label>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-              {["from","to"].map(k=>(
-                <input key={k} type="date" value={dateRange[k]} onChange={e=>setDateRange(p=>({...p,[k]:e.target.value}))}
-                  style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"white", padding:"10px 12px", fontSize:12, fontFamily:"'DM Mono',monospace", outline:"none" }} />
-              ))}
+              <input
+                type="date"
+                value={dateRange.from}
+                max={dateRange.to || todayDate}
+                onChange={(e) => handleDateChange("from", e.target.value)}
+                style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"white", padding:"10px 12px", fontSize:12, fontFamily:"'DM Mono',monospace", outline:"none" }}
+              />
+              <input
+                type="date"
+                value={dateRange.to}
+                min={dateRange.from || undefined}
+                max={todayDate}
+                onChange={(e) => handleDateChange("to", e.target.value)}
+                style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"white", padding:"10px 12px", fontSize:12, fontFamily:"'DM Mono',monospace", outline:"none" }}
+              />
             </div>
           </div>
           {[{name:"gmail",label:"Connect Gmail",color:"#ea4335",icon:"G"},{name:"outlook",label:"Connect Outlook",color:"#0078d4",icon:"O"}].map(src=>{
