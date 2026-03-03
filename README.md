@@ -57,3 +57,24 @@ Backend: `http://localhost:8787`
 4. Set OAuth redirect URIs in providers:
    - Google: `https://<your-service>.onrender.com/api/auth/google/callback`
    - Microsoft: `https://<your-service>.onrender.com/api/auth/outlook/callback`
+
+## Custom Domain (Cloudflare + Render)
+1. In Render service settings, open **Custom Domains** and add `jobradar.simona.life`.
+2. Render will show a DNS target (usually your `*.onrender.com` host).
+3. In Cloudflare DNS, create:
+   - `Type`: `CNAME`
+   - `Name`: `jobradar`
+   - `Target`: the Render target host
+4. Keep Cloudflare proxy **DNS only** until Render certificate is issued, then you can switch to proxied if desired.
+5. After domain is active, update Render env:
+   - `APP_BASE_URL=https://jobradar.simona.life`
+   - `SERVER_BASE_URL=https://jobradar.simona.life`
+   - `GOOGLE_REDIRECT_URI=https://jobradar.simona.life/api/auth/google/callback`
+   - `MICROSOFT_REDIRECT_URI=https://jobradar.simona.life/api/auth/outlook/callback`
+6. Update the same redirect URIs in Google Cloud Console and Azure App Registration.
+
+## OAuth Troubleshooting
+- Hit `https://<your-domain>/api/auth/status` and confirm:
+  - `googleConfigured: true`
+  - `outlookConfigured: true`
+- If either is `false`, the Render env key name is wrong or value is empty.

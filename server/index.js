@@ -8,11 +8,11 @@ const dotenv = require("dotenv");
 dotenv.config();
 
 const app = express();
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "1mb" }));
 
 const PORT = Number(process.env.PORT || process.env.SERVER_PORT || 8787);
 const SERVER_BASE_URL = process.env.SERVER_BASE_URL || `http://localhost:${PORT}`;
-const APP_BASE_URL = process.env.APP_BASE_URL || "http://localhost:5173";
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "jobradar_sid";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
@@ -105,11 +105,27 @@ function missingOAuthConfig(provider) {
   return !process.env.MICROSOFT_CLIENT_ID || !process.env.MICROSOFT_CLIENT_SECRET;
 }
 
-function oauthRedirectUrl(status, provider, message) {
+function getRequestBaseUrl(req) {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+  const proto = forwardedProto || req.protocol || "https";
+  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
+  if (host) return `${proto}://${host}`;
+  return SERVER_BASE_URL;
+}
+
+function getServerBaseUrl(req) {
+  return process.env.SERVER_BASE_URL || getRequestBaseUrl(req);
+}
+
+function getAppBaseUrl(req) {
+  return process.env.APP_BASE_URL || getRequestBaseUrl(req);
+}
+
+function oauthRedirectUrl(req, status, provider, message) {
   const params = new URLSearchParams();
   params.set("oauth", `${provider}_${status}`);
   if (message) params.set("message", message);
-  return `${APP_BASE_URL}/?${params.toString()}`;
+  return `${getAppBaseUrl(req)}/?${params.toString()}`;
 }
 
 function safeErrorMessage(error, fallback) {
@@ -133,6 +149,8 @@ app.get("/api/auth/status", (req, res) => {
 
   res.json({
     connected,
+    googleConfigured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    outlookConfigured: Boolean(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET),
     google: {
       connected: googleConnected,
       email: req.session.google?.profile?.email || "",
@@ -152,13 +170,13 @@ app.get("/api/auth/status", (req, res) => {
 
 app.get("/api/auth/google/start", (req, res) => {
   if (missingOAuthConfig("google")) {
-    return res.redirect(oauthRedirectUrl("error", "google", "Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET"));
+    return res.redirect(oauthRedirectUrl(req, "error", "google", "Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET"));
   }
 
   const state = crypto.randomUUID();
   req.session.oauthState.google = state;
 
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${SERVER_BASE_URL}/api/auth/google/callback`;
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/google/callback`;
   const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   authUrl.searchParams.set("client_id", process.env.GOOGLE_CLIENT_ID);
   authUrl.searchParams.set("redirect_uri", redirectUri);
@@ -179,15 +197,15 @@ app.get("/api/auth/google/start", (req, res) => {
 app.get("/api/auth/google/callback", async (req, res) => {
   const { code, state, error } = req.query;
   if (error) {
-    return res.redirect(oauthRedirectUrl("error", "google", String(error)));
+    return res.redirect(oauthRedirectUrl(req, "error", "google", String(error)));
   }
 
   if (!code || state !== req.session.oauthState.google) {
-    return res.redirect(oauthRedirectUrl("error", "google", "Invalid Google OAuth state"));
+    return res.redirect(oauthRedirectUrl(req, "error", "google", "Invalid Google OAuth state"));
   }
 
   try {
-    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${SERVER_BASE_URL}/api/auth/google/callback`;
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/google/callback`;
     const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -228,9 +246,9 @@ app.get("/api/auth/google/callback", async (req, res) => {
     };
 
     delete req.session.oauthState.google;
-    return res.redirect(oauthRedirectUrl("success", "google"));
+    return res.redirect(oauthRedirectUrl(req, "success", "google"));
   } catch (err) {
-    return res.redirect(oauthRedirectUrl("error", "google", safeErrorMessage(err, "Google OAuth failed")));
+    return res.redirect(oauthRedirectUrl(req, "error", "google", safeErrorMessage(err, "Google OAuth failed")));
   }
 });
 
@@ -241,14 +259,14 @@ app.post("/api/auth/google/disconnect", (req, res) => {
 
 app.get("/api/auth/outlook/start", (req, res) => {
   if (missingOAuthConfig("outlook")) {
-    return res.redirect(oauthRedirectUrl("error", "outlook", "Missing MICROSOFT_CLIENT_ID or MICROSOFT_CLIENT_SECRET"));
+    return res.redirect(oauthRedirectUrl(req, "error", "outlook", "Missing MICROSOFT_CLIENT_ID or MICROSOFT_CLIENT_SECRET"));
   }
 
   const tenant = process.env.MICROSOFT_TENANT_ID || "common";
   const state = crypto.randomUUID();
   req.session.oauthState.outlook = state;
 
-  const redirectUri = process.env.MICROSOFT_REDIRECT_URI || `${SERVER_BASE_URL}/api/auth/outlook/callback`;
+  const redirectUri = process.env.MICROSOFT_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/outlook/callback`;
   const authUrl = new URL(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize`);
   authUrl.searchParams.set("client_id", process.env.MICROSOFT_CLIENT_ID);
   authUrl.searchParams.set("redirect_uri", redirectUri);
@@ -269,16 +287,16 @@ app.get("/api/auth/outlook/start", (req, res) => {
 app.get("/api/auth/outlook/callback", async (req, res) => {
   const { code, state, error } = req.query;
   if (error) {
-    return res.redirect(oauthRedirectUrl("error", "outlook", String(error)));
+    return res.redirect(oauthRedirectUrl(req, "error", "outlook", String(error)));
   }
 
   if (!code || state !== req.session.oauthState.outlook) {
-    return res.redirect(oauthRedirectUrl("error", "outlook", "Invalid Microsoft OAuth state"));
+    return res.redirect(oauthRedirectUrl(req, "error", "outlook", "Invalid Microsoft OAuth state"));
   }
 
   try {
     const tenant = process.env.MICROSOFT_TENANT_ID || "common";
-    const redirectUri = process.env.MICROSOFT_REDIRECT_URI || `${SERVER_BASE_URL}/api/auth/outlook/callback`;
+    const redirectUri = process.env.MICROSOFT_REDIRECT_URI || `${getServerBaseUrl(req)}/api/auth/outlook/callback`;
     const tokenResp = await fetch(
       `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
       {
@@ -323,9 +341,9 @@ app.get("/api/auth/outlook/callback", async (req, res) => {
     };
 
     delete req.session.oauthState.outlook;
-    return res.redirect(oauthRedirectUrl("success", "outlook"));
+    return res.redirect(oauthRedirectUrl(req, "success", "outlook"));
   } catch (err) {
-    return res.redirect(oauthRedirectUrl("error", "outlook", safeErrorMessage(err, "Microsoft OAuth failed")));
+    return res.redirect(oauthRedirectUrl(req, "error", "outlook", safeErrorMessage(err, "Microsoft OAuth failed")));
   }
 });
 
