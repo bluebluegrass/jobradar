@@ -48,6 +48,13 @@ const GOOGLE_CLIENT_SECRET =
   GOOGLE_OAUTH_CREDENTIALS.client_secret ||
   "";
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || "";
+const GOOGLE_SCOPES = (
+  process.env.GOOGLE_SCOPES ||
+  "https://www.googleapis.com/auth/gmail.readonly"
+)
+  .split(/\s+/)
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const MICROSOFT_CLIENT_ID =
   process.env.MICROSOFT_CLIENT_ID ||
@@ -225,12 +232,7 @@ app.get("/api/auth/google/start", (req, res) => {
   authUrl.searchParams.set("client_id", GOOGLE_CLIENT_ID);
   authUrl.searchParams.set("redirect_uri", redirectUri);
   authUrl.searchParams.set("response_type", "code");
-  authUrl.searchParams.set("scope", [
-    "openid",
-    "email",
-    "profile",
-    "https://www.googleapis.com/auth/gmail.readonly",
-  ].join(" "));
+  authUrl.searchParams.set("scope", GOOGLE_SCOPES.join(" "));
   authUrl.searchParams.set("access_type", "offline");
   authUrl.searchParams.set("prompt", "consent");
   authUrl.searchParams.set("state", state);
@@ -267,7 +269,7 @@ app.get("/api/auth/google/callback", async (req, res) => {
       throw new Error(tokenJson.error_description || tokenJson.error || "Google token exchange failed");
     }
 
-    const profileResp = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+    const profileResp = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
       headers: { Authorization: `Bearer ${tokenJson.access_token}` },
     });
     const profileJson = await profileResp.json();
@@ -282,10 +284,10 @@ app.get("/api/auth/google/callback", async (req, res) => {
         tokenType: tokenJson.token_type,
       },
       profile: {
-        sub: profileJson.sub,
-        email: profileJson.email,
-        name: profileJson.name,
-        picture: profileJson.picture,
+        sub: "",
+        email: profileJson.emailAddress || "",
+        name: "",
+        picture: "",
       },
     };
 

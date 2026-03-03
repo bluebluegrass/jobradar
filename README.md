@@ -30,6 +30,7 @@ cp .env.example .env
   - `FRONTEND_BASE_URL` (for `APP_BASE_URL`)
   - `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_TENANT_ID`, `MS_REDIRECT_URI`
   - `GOOGLE_OAUTH_CREDENTIALS_JSON` (JSON containing Google `client_id` and `client_secret`)
+  - Optional: `GOOGLE_SCOPES` (defaults to Gmail read-only scope)
 
 4. Configure OAuth redirect URIs
 - Google: `http://localhost:8787/api/auth/google/callback`
