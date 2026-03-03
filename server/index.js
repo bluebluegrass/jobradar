@@ -396,13 +396,6 @@ app.post("/api/auth/outlook/disconnect", (req, res) => {
   res.json({ ok: true });
 });
 
-function toUnixSeconds(dateString, fallbackSeconds) {
-  if (!dateString) return fallbackSeconds;
-  const date = new Date(dateString);
-  if (Number.isNaN(date.getTime())) return fallbackSeconds;
-  return Math.floor(date.getTime() / 1000);
-}
-
 function compactEmailText(value, maxLen = 500) {
   return String(value || "")
     .replace(/\s+/g, " ")
@@ -410,45 +403,49 @@ function compactEmailText(value, maxLen = 500) {
     .slice(0, maxLen);
 }
 
-async function fetchGoogleJobEmails(session, dateRange) {
-  const accessToken = session.google?.tokens?.accessToken;
-  if (!accessToken) return [];
+const JOB_TERMS = [
+  "application",
+  "interview",
+  "recruit",
+  "hiring",
+  "offer",
+  "reject",
+  "phone screen",
+  "technical",
+  "onsite",
+  "greenhouse",
+  "lever",
+  "career",
+  "job",
+  "职位",
+  "面试",
+  "录用",
+  "申请",
+];
 
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const fromSeconds = toUnixSeconds(dateRange?.from, nowSeconds - 365 * 24 * 60 * 60);
-  const toSeconds = toUnixSeconds(dateRange?.to, nowSeconds);
-  const keywordQuery = [
-    "application",
-    "interview",
-    "recruiter",
-    "hiring",
-    "offer",
-    "rejection",
-    "phone screen",
-    "technical",
-  ]
-    .map((k) => `"${k}"`)
-    .join(" OR ");
+function looksJobRelated(text) {
+  const hay = String(text || "").toLowerCase();
+  return JOB_TERMS.some((term) => hay.includes(term));
+}
 
-  const gmailQuery = `after:${fromSeconds} before:${toSeconds} (${keywordQuery})`;
-  const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-  listUrl.searchParams.set("maxResults", "20");
-  listUrl.searchParams.set("q", gmailQuery);
+function parseDateOrFallback(dateString, fallbackDate) {
+  const date = dateString ? new Date(`${dateString}T00:00:00Z`) : fallbackDate;
+  if (!date || Number.isNaN(date.getTime())) return fallbackDate;
+  return date;
+}
 
-  const listResp = await fetch(listUrl.toString(), {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  const listJson = await listResp.json();
-  if (!listResp.ok) {
-    throw new Error(listJson.error?.message || "Gmail fetch failed");
-  }
+function toGmailDate(date) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}/${m}/${d}`;
+}
 
-  const messages = Array.isArray(listJson.messages) ? listJson.messages : [];
-  if (!messages.length) return [];
-
+async function fetchGoogleMessageDetails(accessToken, messageIds) {
+  if (!messageIds.length) return [];
   const details = await Promise.all(
-    messages.map(async (message) => {
-      const msgUrl = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`);
+    messageIds.map(async (messageId) => {
+      const msgUrl = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}`);
       msgUrl.searchParams.set("format", "metadata");
       msgUrl.searchParams.append("metadataHeaders", "From");
       msgUrl.searchParams.append("metadataHeaders", "Subject");
@@ -475,8 +472,70 @@ async function fetchGoogleJobEmails(session, dateRange) {
       };
     })
   );
-
   return details.filter(Boolean);
+}
+
+async function fetchGoogleJobEmails(session, dateRange) {
+  const accessToken = session.google?.tokens?.accessToken;
+  if (!accessToken) return [];
+
+  const now = new Date();
+  const defaultFrom = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), now.getUTCDate()));
+  const fromDateInput = parseDateOrFallback(dateRange?.from, defaultFrom);
+  const toDateInclusive = parseDateOrFallback(dateRange?.to, now);
+  const toDateExclusive = new Date(toDateInclusive);
+  toDateExclusive.setUTCDate(toDateExclusive.getUTCDate() + 1);
+  const fromDate = fromDateInput <= toDateExclusive ? fromDateInput : new Date(toDateInclusive);
+
+  const fromDateStr = toGmailDate(fromDate);
+  const toDateStr = toGmailDate(toDateExclusive);
+
+  const keywordQuery = [
+    "application",
+    "interview",
+    "recruit",
+    "hiring",
+    "offer",
+    "rejection",
+    "\"phone screen\"",
+    "technical",
+    "career",
+    "job",
+  ]
+    .join(" OR ");
+
+  const queries = [
+    `after:${fromDateStr} before:${toDateStr} (${keywordQuery})`,
+    `after:${fromDateStr} before:${toDateStr}`,
+  ];
+
+  let messageIds = [];
+  for (const query of queries) {
+    const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+    listUrl.searchParams.set("maxResults", "80");
+    listUrl.searchParams.set("q", query);
+
+    const listResp = await fetch(listUrl.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const listJson = await listResp.json();
+    if (!listResp.ok) {
+      throw new Error(listJson.error?.message || "Gmail fetch failed");
+    }
+    const messages = Array.isArray(listJson.messages) ? listJson.messages : [];
+    if (messages.length) {
+      messageIds = messages.map((m) => m.id).filter(Boolean);
+      break;
+    }
+  }
+
+  if (!messageIds.length) return [];
+
+  const details = await fetchGoogleMessageDetails(accessToken, messageIds);
+  const filtered = details.filter((entry) =>
+    looksJobRelated(`${entry.from} ${entry.subject} ${entry.body}`)
+  );
+  return filtered.length ? filtered : details.slice(0, 30);
 }
 
 async function fetchOutlookJobEmails(session, dateRange) {
@@ -504,11 +563,10 @@ async function fetchOutlookJobEmails(session, dateRange) {
   }
 
   const rows = Array.isArray(data.value) ? data.value : [];
-  const terms = ["application", "interview", "recruit", "hiring", "offer", "reject", "screen", "technical"];
   return rows
     .filter((row) => {
       const hay = `${row.subject || ""} ${row.bodyPreview || ""}`.toLowerCase();
-      return terms.some((term) => hay.includes(term));
+      return looksJobRelated(hay);
     })
     .map((row) => ({
       provider: "outlook",
